@@ -2,10 +2,13 @@ import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as lambdaNodeJS from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
 
 interface OrdersApplicationStackProps extends cdk.StackProps {
-    productsDdb: dynamodb.Table
+    productsDdb: dynamodb.Table,
+    eventsDdb: dynamodb.Table,
 }
 
 export class OrdersApplicationStack extends cdk.Stack {
@@ -13,6 +16,16 @@ export class OrdersApplicationStack extends cdk.Stack {
 
     constructor(scope: Construct, id: string, props: OrdersApplicationStackProps){
         super(scope, id, props);
+
+        const ordersTopic = new sns.Topic(this, 'OrderEventsTopic', {
+            displayName: 'Order events topic',
+            topicName: 'order-events',
+        })
+
+        //TODO - to be removed
+        ordersTopic.addSubscription(new subs.EmailSubscription('adrianoeduardotrentin@hotmail.com', {
+            json: true,
+        }))
 
         const ordersDdb = new dynamodb.Table(this, 'OrdersDdb', {
             tableName: 'Orders',
@@ -39,7 +52,8 @@ export class OrdersApplicationStack extends cdk.Stack {
             },
             environment: {
                 PRODUCTS_DDB: props.productsDdb.tableName,
-                ORDERS_DDB: ordersDdb.tableName
+                ORDERS_DDB: ordersDdb.tableName,
+                ORDER_EVENTS_TOPIC_ARN: ordersTopic.topicArn,
             },
             memorySize: 128,
             tracing: lambda.Tracing.ACTIVE,
