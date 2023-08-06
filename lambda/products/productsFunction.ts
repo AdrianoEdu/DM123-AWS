@@ -1,17 +1,27 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from "aws-lambda";
 import { DocumentClient } from "aws-sdk/clients/dynamodb";
 import { v4 as uuid } from 'uuid';
+import * as AWSXRay from 'aws-xray-sdk';
+import { Lambda } from 'aws-sdk';
+import { ProductEvent, ProductEventType } from "./productEventsFunction";
+
+AWSXRay.captureAWS(require('aws-sdk'));
 
 export interface Product {
     id: string,
     productName: string,
     code: string,
     price: number,
-    model: string
+    model: string,
+    productUrl: string,
 }
 
-const ddbClient = new DocumentClient();
+
 const productDdb = process.env.PRODUCTS_DDB!;
+const productEventsFunctionName = process.env.PRODUCT_EVENTS_FUNCTION_NAME!;
+
+const ddbClient = new DocumentClient();
+const lambdaClient = new Lambda();
 
 export async function handler(event: APIGatewayProxyEvent, context: Context): Promise<APIGatewayProxyResult> {
  
@@ -39,7 +49,9 @@ export async function handler(event: APIGatewayProxyEvent, context: Context): Pr
             const product = JSON.parse(event.body!) as Product
 
             const createdProduct = await createProduct(product);
-            
+            const response = await sendProductEvent(createdProduct, ProductEventType.CREATED, 'matilde@inatel.br', apiRequestId);
+
+            console.log(response);
             return {
                 statusCode: 201,
                 body: JSON.stringify(createdProduct),
@@ -75,7 +87,12 @@ export async function handler(event: APIGatewayProxyEvent, context: Context): Pr
             console.log(`DELETE /products/${productId}`);
 
             try {
-                const product = await deleteProductById(productId);
+                const product = await deleteProductById(productId); 
+
+                const response = await sendProductEvent(product, ProductEventType.DELETED, 'rafa@inatel.br', apiRequestId);
+
+                console.log(response);
+
                 return{
                     statusCode: 200,
                     body: JSON.stringify(product),
@@ -95,6 +112,11 @@ export async function handler(event: APIGatewayProxyEvent, context: Context): Pr
             
             try {
                 const productUpdated = await updateProduct(productId, product);
+                
+                const response = await sendProductEvent(productUpdated, ProductEventType.UPDATED, 'jaqueline@inatel.br', apiRequestId);
+
+                console.log(response);
+
                 return { 
                     statusCode: 200, 
                     body: JSON.stringify(productUpdated)
@@ -119,6 +141,23 @@ export async function handler(event: APIGatewayProxyEvent, context: Context): Pr
     };
 }
 
+function sendProductEvent(product: Product, eventType: ProductEventType, email: string, apiGwRequestId: string){
+    const event: ProductEvent = {
+        email: email,
+        eventType: eventType,
+        productCode: product.code,
+        productId: product.id,
+        productPrice: product.price,
+        requestId: apiGwRequestId,
+    }
+
+    lambdaClient.invoke({
+        FunctionName: productEventsFunctionName,
+        Payload: JSON.stringify(event),
+        InvocationType: "RequestResponse",
+    }).promise();
+}
+
 async function updateProduct(productId: string, product: Product) {
     const data = await ddbClient.update({
         TableName: productDdb,
@@ -127,12 +166,13 @@ async function updateProduct(productId: string, product: Product) {
         },
         ConditionExpression: 'attribute_exists(id)',
         ReturnValues: 'UPDATED_NEW',
-        UpdateExpression: 'set productName = :n, code = :c, price = :p, model = :m',
+        UpdateExpression: 'set productName = :n, code = :c, price = :p, model = :m, productUrl = :u',
         ExpressionAttributeValues: {
             ':n': product.productName,
             ':c': product.code,
             ':p': product.price,
             ':m': product.model,
+            ':u': product.productUrl,
         }
     }).promise();
 
