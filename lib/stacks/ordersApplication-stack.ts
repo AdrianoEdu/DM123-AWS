@@ -60,8 +60,8 @@ export class OrdersApplicationStack extends cdk.Stack {
             insightsVersion: lambda.LambdaInsightsVersion.VERSION_1_0_143_0,
             timeout: cdk.Duration.seconds(10)
         })
-
         props.productsDdb.grantReadData(this.ordersHandler);
         ordersDdb.grantReadWriteData(this.ordersHandler);
+        ordersTopic.grantPublish(this.ordersHandler);
     }
 }
