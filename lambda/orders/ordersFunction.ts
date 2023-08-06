@@ -1,0 +1,351 @@
+import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from "aws-lambda";
+import { v4 as uuid } from 'uuid';
+import { DocumentClient } from "aws-sdk/clients/dynamodb";
+import * as AWSXRay from 'aws-xray-sdk';
+
+AWSXRay.captureAWS(require('aws-sdk'));
+
+const productDdb = process.env.PRODUCTS_DDB!;
+const ordersDdb = process.env.ORDERS_DDB!;
+
+const ddbClient = new DocumentClient();
+
+interface OrderRequest {
+    email: string,
+    productIds: string[],
+    payment: PaymentType,
+    shipping: {
+        type: ShippintType,
+        carrier: CarrierType,
+    }
+}
+
+interface OrderProductReponse {
+    code: string,
+    price: number,
+}
+
+interface OrderResponse {
+    email: string,
+    id: string,
+    createdAt: number,
+    billing: {
+        payment: PaymentType,
+        totalPrice: number,
+    }
+    shipping: {
+        type: ShippintType,
+        carrier: CarrierType
+    },
+    products?: OrderProductReponse[]
+}
+
+interface OrderProduct {
+    code: string,
+    price: number,
+}
+
+interface Order {
+    pk: string, //   \-- PK
+    sk: string, //   \-- SK
+    createdAt: number, 
+    billing: {
+        payment: PaymentType,
+        totalPrice: number,
+    }
+    shipping: {
+        type: ShippintType,
+        carrier: CarrierType
+    },
+    products?: OrderProduct[]
+
+}
+
+export interface Product {
+    id: string,
+    productName: string,
+    code: string,
+    price: number,
+    model: string,
+    productUrl: string,
+}
+
+enum PaymentType {
+    CASH = "CASH",
+    DEBIT_CARD = "DEBIT_CARD",
+    CREDIT_CARD = "CREDIT_CARD",
+}
+
+enum ShippintType {
+    ECONOMIC = "ECONOMIC",
+    URGENT = "URGENT"
+}
+
+enum CarrierType {
+    CORREIOS = "CORREIOS",
+    FEDEX = "FEDEX",
+}
+
+
+export async function handler(event: APIGatewayProxyEvent, context: Context): Promise<APIGatewayProxyResult> {
+ 
+    const method = event.httpMethod;
+    console.log(event);
+
+    const apiRequestId = event.requestContext.resourceId;
+    const lambdaRequestId = context.awsRequestId;
+
+    console.log(
+        `API Gateway RequestId: ${apiRequestId} - Lambda RequestId: ${lambdaRequestId}`
+    );
+
+    if(event.resource === '/orders'){
+        if(method === "GET"){
+            if(event.queryStringParameters){
+                if(event.queryStringParameters.email){
+                    if(event.queryStringParameters.orderId){
+                        // Get one order from a user
+                        console.log(`Get one order from a user`);
+
+                        try {
+                            const order = await getOrder(
+                                event.queryStringParameters.email,
+                                event.queryStringParameters.orderId
+                            )
+
+                                return {
+                                statusCode: 200,
+                                body: JSON.stringify(convertToOrderResponse(order))
+                            }
+                        }
+                        catch(error){
+                            return {
+                                statusCode: 404,
+                                body: (<Error>error).message,
+                            }
+                        }
+
+                     
+                    }
+                    else{
+                        //Get all orders from a user
+                        console.log(`Get all orders from a user`);
+                        const orders = await getOrdersByEmail(event.queryStringParameters.email);
+                        return {
+                            statusCode: 200,
+                            body: JSON.stringify(orders.map(convertToOrderResponse))
+                        }
+                    }
+                }
+            }
+            else{
+                //Get all orders
+                console.log(`Get all orders`);
+                const orders = await getAllOrders();
+
+                return {
+                    statusCode: 200,
+                    body: JSON.stringify(orders.map(convertToOrderResponse))
+                }
+            }
+        }
+
+        if(method === 'POST'){
+           console.log(`POST /orders`);
+
+           const orderRequest = JSON.parse(event.body!) as OrderRequest;
+           const products = await getProductsById(orderRequest.productIds);
+           
+           if (products.length == orderRequest.productIds.length) {
+                const order = buildOrder(orderRequest, products);
+                const orderCreated = await CreateOrder(order);
+
+                return {
+                    statusCode: 201,
+                    body: JSON.stringify(convertToOrderResponse(orderCreated)),
+                }
+           } 
+           else {
+                return{
+                    statusCode: 404,
+                    body: 'Some product was not found'
+                }
+           }
+        }
+
+        if(method === 'DELETE'){
+            if(event.queryStringParameters && event.queryStringParameters.email && event.queryStringParameters.orderId) {
+                console.log(`DELETE order`);
+
+                try {
+                    const order = await deleteOrder(
+                        event.queryStringParameters.email,
+                        event.queryStringParameters.orderId
+                    )
+
+                    return {
+                        statusCode: 200,
+                        body: JSON.stringify(convertToOrderResponse(order))
+                    }
+
+                } catch (error) {
+                    return {
+                        statusCode: 404,
+                        body: (<Error>error).message,
+                    }
+                }
+            }
+        }
+
+    }
+
+    return {
+        statusCode: 400,
+        headers: {},
+        body: JSON.stringify({
+        message: "Bad request",
+        ApiGwRequestId: apiRequestId,
+        LambdaRequestId: lambdaRequestId,
+        }),
+    };
+}
+
+async function deleteOrder(email: string, orderId: string) {
+    const data = await ddbClient.delete({
+        TableName: ordersDdb,
+        Key: {
+            pk: email,
+            sk: orderId,
+        },
+        ReturnValues: "ALL_OLD",
+    }).promise()
+
+    if(data.Attributes)
+        return data.Attributes as Order;
+    else 
+        throw new Error(`Order not found`);
+}
+
+async function getOrder(email: string, orderId: string) {
+    const data = await ddbClient.get({
+        TableName: ordersDdb,
+        Key: {
+            pk: email,
+            sk: orderId,
+        }
+    }).promise()
+
+    if(data.Item)
+        return data.Item as Order;
+    else 
+        throw new Error(`Order not found`);
+}
+
+async function getOrdersByEmail(email: string): Promise<Order[]> {
+    const data = await ddbClient.query({
+        TableName: ordersDdb,
+        KeyConditionExpression: "pk = :email",
+        ExpressionAttributeValues: {
+            ":email": email
+        }, 
+    }).promise()
+    
+    return data.Items as Order[]
+}
+
+async function getAllOrders(): Promise<Order[]> {
+    // NÂO FAÇA ISSO !!!
+    const data = await ddbClient.scan({
+        TableName: ordersDdb
+    }).promise();
+
+    return data.Items as Order[];
+}
+
+async function getProductsById(productIds: string[]): Promise<Product[]> {
+    const keys: { id: string}[] = []
+
+    productIds.forEach((productId) => {
+        keys.push({
+            id: productId
+        })
+    });
+
+    const data = await ddbClient.batchGet({
+        RequestItems: {
+            [productDdb]: {
+                Keys: keys
+            }
+        }
+    }).promise()
+
+    return data.Responses![productDdb] as Product[];
+}
+
+async function CreateOrder(order: Order): Promise<Order> {
+    await ddbClient.put({
+        TableName: ordersDdb,
+        Item: order,
+    }).promise()
+
+    return order;    
+}
+
+function convertToOrderResponse(order: Order): OrderResponse {
+    const orderProducts: OrderProductReponse[] = [];
+
+    order.products?.forEach((product) => {
+        orderProducts.push({
+            code: product.code,
+            price: product.price
+        })
+    });
+
+    const orderResponse: OrderResponse = {
+        email: order.pk,
+        id: order.sk,
+        createdAt: order.createdAt,
+        products: orderProducts.length ? orderProducts : undefined,
+        billing: {
+            payment: order.billing.payment,
+            totalPrice: order.billing.totalPrice
+        },
+        shipping: {
+            type: order.shipping.type,
+            carrier: order.shipping.carrier,
+        }
+    }
+
+    return orderResponse;
+}
+
+function buildOrder(orderRequest: OrderRequest, products: Product[]): Order {
+    const orderProducts: OrderProduct[] = [];
+    let totalPrice = 0;
+
+
+    products?.forEach((product) => {
+        totalPrice += product.price
+        orderProducts.push({
+            code: product.code,
+            price: product.price
+        })
+    });
+
+    const order: Order = {
+        pk: orderRequest.email,
+        sk: uuid(),
+        createdAt: Date.now(),
+        billing: {
+            payment: orderRequest.payment,
+            totalPrice: totalPrice
+        },
+        shipping: {
+            type: orderRequest.shipping.type,
+            carrier: orderRequest.shipping.carrier,
+        },
+        products: orderProducts,
+    }
+
+    return order;
+}

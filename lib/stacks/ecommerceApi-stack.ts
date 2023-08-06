@@ -6,6 +6,7 @@ import * as cwlogs from "aws-cdk-lib/aws-logs"
 
 interface ECommerceApiStackProps extends cdk.StackProps {
     productsHandler: lambdaNodeJS.NodejsFunction
+    ordersHandler: lambdaNodeJS.NodejsFunction
 }
 
 export class ECommerceApiStack extends cdk.Stack {
@@ -55,6 +56,15 @@ export class ECommerceApiStack extends cdk.Stack {
         // //DELETE http://...../products/{id}
         productIdResource.addMethod('DELETE', productsFunctionIntegration);
         
+        const ordersFunctionIntegration = new apigateway.LambdaIntegration(props.ordersHandler);
+        const ordersResource = api.root.addResource('orders');
+
+        ordersResource.addMethod("GET", ordersFunctionIntegration);
+
+        ordersResource.addMethod("DELETE", ordersFunctionIntegration);
+
+        ordersResource.addMethod("POST", ordersFunctionIntegration);
+
         this.urlOutput = new cdk.CfnOutput(this, 'url', {
             exportName: 'url',
             value: api.url,

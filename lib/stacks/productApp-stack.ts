@@ -10,11 +10,12 @@ interface ProductAppStackProps extends cdk.StackProps {
 
 export class ProductAppStack extends cdk.Stack {
     readonly handler: lambdaNodeJS.NodejsFunction;
+    readonly productsDdb: dynamodb.Table;
 
     constructor(scope: Construct, id: string, props: ProductAppStackProps) {
         super(scope, id, props);
 
-        const productsDdb = new dynamodb.Table(this, 'ProductsDdb', {
+        this.productsDdb = new dynamodb.Table(this, 'ProductsDdb', {
             tableName: 'products',
             partitionKey: {
                 name: 'id',
@@ -35,7 +36,7 @@ export class ProductAppStack extends cdk.Stack {
                 sourceMap: false,
             },
             environment: {
-                PRODUCTS_DDB: productsDdb.tableName,
+                PRODUCTS_DDB: this.productsDdb.tableName,
                 PRODUCT_EVENTS_FUNCTION_NAME: props.productEventsFunction.functionName,
             },
             memorySize: 128,
@@ -44,7 +45,7 @@ export class ProductAppStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(30),
         });
 
-        productsDdb.grantReadWriteData(this.handler);
+        this.productsDdb.grantReadWriteData(this.handler);
         props.productEventsFunction.grantInvoke(this.handler);
     }
 }

@@ -16,7 +16,6 @@ export interface Product {
     productUrl: string,
 }
 
-
 const productDdb = process.env.PRODUCTS_DDB!;
 const productEventsFunctionName = process.env.PRODUCT_EVENTS_FUNCTION_NAME!;
 
