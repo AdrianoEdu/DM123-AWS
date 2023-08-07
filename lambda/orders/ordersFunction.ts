@@ -3,7 +3,6 @@ import { v4 as uuid } from 'uuid';
 import { DocumentClient } from "aws-sdk/clients/dynamodb";
 import * as AWSXRay from 'aws-xray-sdk';
 import { SNS } from 'aws-sdk';
-import { ApiGateway } from "aws-cdk-lib/aws-events-targets";
 
 AWSXRay.captureAWS(require('aws-sdk'));
 
@@ -109,7 +108,6 @@ enum CarrierType {
     CORREIOS = "CORREIOS",
     FEDEX = "FEDEX",
 }
-
 
 export async function handler(event: APIGatewayProxyEvent, context: Context): Promise<APIGatewayProxyResult> {
  

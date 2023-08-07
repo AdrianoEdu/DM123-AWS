@@ -27,6 +27,28 @@ export class ProductAppStack extends cdk.Stack {
             removalPolicy: cdk.RemovalPolicy.DESTROY,            
         })
 
+        const redScale = this.productsDdb.autoScaleReadCapacity({
+            maxCapacity: 4,
+            minCapacity: 1,
+        });
+
+        redScale.scaleOnUtilization({
+            targetUtilizationPercent: 10,
+            scaleInCooldown: cdk.Duration.seconds(60),
+            scaleOutCooldown: cdk.Duration.seconds(60),
+        })
+
+        const writeScale = this.productsDdb.autoScaleWriteCapacity({
+            maxCapacity: 4,
+            minCapacity: 1
+        });
+
+        writeScale.scaleOnUtilization({
+            targetUtilizationPercent: 10,
+            scaleInCooldown: cdk.Duration.seconds(60),
+            scaleOutCooldown: cdk.Duration.seconds(60),
+        })
+
         this.handler = new lambdaNodeJS.NodejsFunction(this, 'ProductsFunctionAWS', {
             functionName: 'ProductsFunctionAWS',
             entry: 'lambda/products/productsFunction.ts',
